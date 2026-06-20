@@ -43,6 +43,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SDI.h"
 #include "ff_utf8.h"
 
+#include "ap_tcp.h"
+
 //#define USE_OSREPORTDM 1
 
 //#undef DEBUG
@@ -64,6 +66,8 @@ extern vu32 DisableSIPatch;
 extern vu32 bbaEmuWanted;
 extern char __bss_start, __bss_end;
 extern char __di_stack_addr, __di_stack_size;
+
+int init_status;
 
 u32 virtentry = 0;
 u32 drcAddress = 0;
@@ -269,6 +273,7 @@ int _main( int argc, char *argv[] )
 	sync_after_write((void*)0x1860, 0x20);
 #endif
 	u32 Now = read32(HW_TIMER);
+	u32 FailState = read32(HW_TIMER);
 	u32 PADTimer = Now;
 	u32 DiscChangeTimer = Now;
 	u32 ResetTimer = Now;
@@ -330,10 +335,24 @@ int _main( int argc, char *argv[] )
 		else if (!ConfigGetConfig(NIN_CFG_WIIU_WIDE) && isWidescreen)
 			write32(0xd8006a0, 0x30000002), mask32(0xd8006a8, 0, 2);
 	}
-
+	
+	APTCP apt;
+	init_status = ap_tcp_init(&apt);
+	
 	while (1)
 	{
 		_ahbMemFlush(0);
+		
+		if (TimerDiffSeconds(FailState) > 2)
+		{
+			if (!init_status)
+			{
+				udelay(15000);
+			}
+		}
+		
+		ap_tcp_poll(&apt);
+		
 #ifdef PERFMON
 		loopCnt++;
 		if(TimerDiffTicks(loopPrintTimer) > 1898437)
@@ -462,6 +481,7 @@ int _main( int argc, char *argv[] )
 		if (reset_status == 0x1DEA)
 		{
 			dbgprintf("Game Exit\r\n");
+			ap_tcp_exit(&apt);
 			DIFinishAsync();
 			break;
 		}

@@ -58,7 +58,7 @@ static ioctlv *SOVec[SO_TOTAL_FDS];
 static u32 SO_Thread = 0;
 static u8 *soqueueheap = NULL;
 static u32 *so_stack;
-static int sockFd, nwcFd;
+int sockFd, nwcFd;
 static int ourCurrentIP;
 
 static u32 SOCKAlarm()

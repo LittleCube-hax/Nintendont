@@ -1980,6 +1980,7 @@ void PrintInfo(void)
 	PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*1, "Built   : " __DATE__ " " __TIME__);
 	PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*2, "Firmware: %u.%u.%u",
 		    *(vu16*)0x80003140, *(vu8*)0x80003142, *(vu8*)0x80003143);
+	PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*3, "is u my archipelago dad");
 }
 
 /**
