@@ -23,14 +23,15 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 typedef struct
 {
+	int heap;
 	int sockfd;
-	int get_fcntl;
-	int waiting;
+	int clientfd;
 	int accepted;
 } APTCP;
 
 int ap_tcp_init(APTCP* apt);
 int ap_tcp_poll(APTCP* apt);
+int ap_tcp_poll_debug(APTCP* apt);
 void ap_tcp_exit(APTCP* apt);
 
 #endif

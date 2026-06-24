@@ -339,6 +339,9 @@ int _main( int argc, char *argv[] )
 	APTCP apt;
 	init_status = ap_tcp_init(&apt);
 	
+	APTCP debug;
+	ap_tcp_init(&debug);
+	
 	while (1)
 	{
 		_ahbMemFlush(0);
@@ -351,7 +354,10 @@ int _main( int argc, char *argv[] )
 			}
 		}
 		
-		ap_tcp_poll(&apt);
+		if (!SaveCard)
+		{
+			ap_tcp_poll(&apt);
+		}
 		
 #ifdef PERFMON
 		loopCnt++;

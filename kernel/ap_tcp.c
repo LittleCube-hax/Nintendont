@@ -38,8 +38,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #define INADDR_ANY 0
 
+#define HEAP_SIZE 0x10000
+
 #undef STACK_ALIGN
 #define STACK_ALIGN(type, name, cnt, alignment) _Alignas(alignment) type name[cnt]
+
+#define PUTS(str) tcp_puts(apt, str)
 
 enum
 {
@@ -49,6 +53,8 @@ enum
 	IOCTL_SO_CONNECT = 0x4,
 	IOCTL_SO_FCNTL = 0x5,
 	IOCTL_SO_LISTEN = 0xA,
+	IOCTL_SO_RECVFROM = 0xC,
+	IOCTL_SO_SENDTO = 0xD,
 	IOCTL_SO_SOCKET = 0xF,
 };
 
@@ -67,6 +73,12 @@ enum
 {
 	ENOTCONN = -6,
 	EWOULDBLOCK = -11,
+};
+
+enum
+{
+	CMD_READ = 1,
+	CMD_WRITE = 2,
 };
 
 typedef struct
@@ -108,12 +120,121 @@ typedef struct
 extern int sockFd;
 extern int nwcFd;
 
+static u8 _heap_mem[HEAP_SIZE] __attribute__((aligned(32)));
+
+int recvfrom(APTCP* apt, char* data, u32 len)
+{
+	if (!apt->accepted)
+	{
+		return 0;
+	}
+	
+	STACK_ALIGN(IoctlvData, v, 3, 32);
+	
+	STACK_ALIGN(u32, params, 2, 32);
+	
+	params[0] = apt->clientfd;
+	params[1] = 0;
+	
+	v[0].data = (void*) params;
+	v[0].len = sizeof(u32[2]);
+	
+	v[1].data = (void*) data;
+	v[1].len = len;
+	
+	STACK_ALIGN(u8, dummy, 8, 32);
+	
+	v[2].data = dummy;
+	v[2].len = 8;
+	
+	return IOS_Ioctlv(sockFd, IOCTL_SO_RECVFROM, 1, 2, &v);
+}
+
+int recvall(APTCP* apt, char* data, u32 len)
+{
+	int read = 0;
+	
+	while (read < len)
+	{
+		int got = recvfrom(apt, &data[read], len - read);
+		
+		if (got < 0)
+		{
+			//~ apt->accepted = 0;
+			return 0;
+		}
+		
+		else if (got == 0)
+		{
+			return 0;
+		}
+		
+		read += got;
+	}
+	
+	return 1;
+}
+
+int sendto(APTCP* apt, const char* data, u32 len)
+{
+	if (!apt->accepted)
+	{
+		return 0;
+	}
+	
+	STACK_ALIGN(IoctlvData, v, 2, 32);
+	
+	v[0].data = (void*) data;
+	v[0].len = len;
+	
+	STACK_ALIGN(sendto_params, sp, 1, 32);
+	
+	sp->socket = apt->clientfd;
+	sp->flags = 0;
+	sp->has_destaddr = 0;
+	memset(&sp->destaddr, 0, 8);
+	
+	v[1].data = &sp;
+	v[1].len = sizeof(sendto_params);
+	
+	return IOS_Ioctlv(sockFd, IOCTL_SO_SENDTO, 2, 0, &v);
+}
+
+int sendall(APTCP* apt, const char* data, u32 len)
+{
+	int sent = 0;
+	
+	while (sent < len)
+	{
+		int gave = sendto(apt, &data[sent], len - sent);
+		
+		if (gave < 0)
+		{
+			//~ apt->accepted = 0;
+			return 0;
+		}
+		
+		else if (gave == 0)
+		{
+			return 0;
+		}
+		
+		sent += gave;
+	}
+	
+	return 1;
+}
+
+void tcp_puts(APTCP* apt, const char* str)
+{
+	sendall(apt, str, strlen(str) + 1);
+}
+
 int ap_tcp_init(APTCP* apt)
 {
 	int ncdFd = IOS_Open("/dev/net/ncd/manage", 0);
 	
-	apt->get_fcntl = 0;
-	apt->waiting = 0;
+	apt->heap = heap_create(&_heap_mem, HEAP_SIZE);
 	apt->accepted = 0;
 	
 	int status = -1;
@@ -234,192 +355,20 @@ int ap_tcp_init(APTCP* apt)
 
 int ap_tcp_poll(APTCP* apt)
 {
-	//~ if (ioctl_ppc[0] != 0 && sock_entry_arm[0].busy == 0)
-	//~ {
-		//~ switch (ioctl_ppc[0])
-		//~ {
-			//~ case so_socket:
-			//~ {
-				//~ apt->sockfd = sock_entry_arm[0].retval;
-				
-				//~ sync_before_read((void*) ioctl_ppc, 0x40);
-				//~ sync_before_read(&sock_entry_arm[0], 0x20);
-				
-				//~ ioctl_ppc[0] = so_bind;
-				//~ ioctl_arm[0] = 0;
-				//~ sock_entry_arm[0].busy = 1;
-				//~ sock_entry_arm[0].cmd0 = apt->sockfd;
-				
-				//~ wii_sockaddr_in ap_addr = {0};
-				//~ ap_addr.len = sizeof(wii_sockaddr_in);
-				//~ ap_addr.family = AF_INET;
-				//~ ap_addr.port = 6969;
-				//~ ap_addr.addr = INADDR_ANY;
-				
-				//~ memcpy((void*) &sock_entry_arm[0].cmd1, &ap_addr, 8);
-				//~ soBusy[0] = 0;
-				
-				//~ sync_after_write((void*) ioctl_ppc, 0x40);
-				//~ sync_after_write(&sock_entry_arm[0], 0x20);
-				
-				//~ break;
-			//~ }
-			
-			//~ case so_bind:
-			//~ {
-				//~ sync_before_read((void*) ioctl_ppc, 0x40);
-				//~ sync_before_read((void*) &sock_entry_arm[0], 0x20);
-				
-				//~ ioctl_ppc[0] = so_fcntl;
-				//~ ioctl_arm[0] = 0;
-				//~ sock_entry_arm[0].busy = 1;
-				
-				//~ sock_entry_arm[0].cmd0 = apt->sockfd;
-				//~ sock_entry_arm[0].cmd1 = F_GETFL;
-				//~ sock_entry_arm[0].cmd2 = 0;
-				
-				//~ soBusy[0] = 0;
-				
-				//~ sync_after_write((void*) ioctl_ppc, 0x40);
-				//~ sync_after_write((void*) &sock_entry_arm[0], 0x20);
-				
-				//~ break;
-			//~ }
-			
-			//~ case so_fcntl:
-			//~ {
-				//~ if (!apt->get_fcntl)
-				//~ {
-					//~ u32 sock_flags = sock_entry_arm[0].retval;
-					
-					//~ sync_before_read((void*) ioctl_ppc, 0x40);
-					//~ sync_before_read(&sock_entry_arm[0], 0x20);
-					
-					//~ ioctl_ppc[0] = so_fcntl;
-					//~ ioctl_arm[0] = 0;
-					//~ sock_entry_arm[0].busy = 1;
-					
-					//~ sock_entry_arm[0].cmd0 = apt->sockfd;
-					//~ sock_entry_arm[0].cmd1 = F_SETFL;
-					//~ sock_entry_arm[0].cmd2 = sock_flags | O_NONBLOCK;;
-					
-					//~ soBusy[0] = 0;
-					
-					//~ sync_after_write((void*) ioctl_ppc, 0x40);
-					//~ sync_after_write(&sock_entry_arm[0], 0x20);
-				//~ }
-				
-				//~ else
-				//~ {
-					//~ sync_before_read((void*) ioctl_ppc, 0x40);
-					//~ sync_before_read(&sock_entry_arm[0], 0x20);
-					
-					//~ ioctl_ppc[0] = so_accept;
-					//~ ioctl_arm[0] = 0;
-					//~ sock_entry_arm[0].busy = 1;
-					
-					//~ sock_entry_arm[0].cmd0 = apt->sockfd;
-					
-					//~ soBusy[0] = 0;
-					
-					//~ sync_after_write((void*) ioctl_ppc, 0x40);
-					//~ sync_after_write(&sock_entry_arm[0], 0x20);
-					
-					//~ apt->waiting = 1;
-				//~ }
-				
-				//~ apt->get_fcntl = 1;
-				
-				//~ break;
-			//~ }
-			
-			//~ case so_accept:
-			//~ {
-				//~ int status = sock_entry_arm[0].retval;
-				
-				//~ if (status >= 0)
-				//~ {
-					//~ sync_before_read((void*) ioctl_ppc, 0x40);
-					//~ sync_before_read(&sock_entry_arm[0], 0x20);
-					
-					//~ ioctl_ppc[0] = so_accept;
-					//~ ioctl_arm[0] = 0;
-					//~ sock_entry_arm[0].busy = 1;
-					
-					//~ const char msg[] = "imagine archipelago LMFAO\n";
-					
-					//~ sock_entry_arm[0].cmd0 = apt->sockfd;
-					//~ sock_entry_arm[0].cmd1 = (u32) msg;
-					//~ sock_entry_arm[0].cmd2 = sizeof(msg);
-					//~ sock_entry_arm[0].cmd3 = 0;
-					//~ sock_entry_arm[0].cmd4 = 0;
-					//~ sock_entry_arm[0].cmd5 = 0;
-					
-					//~ soBusy[0] = 0;
-					
-					//~ sync_after_write((void*) ioctl_ppc, 0x40);
-					//~ sync_after_write(&sock_entry_arm[0], 0x20);
-					
-					//~ apt->accepted = 1;
-				//~ }
-				
-				//~ else
-				//~ {
-					//~ sync_before_read((void*) ioctl_ppc, 0x40);
-					//~ sync_before_read(&sock_entry_arm[0], 0x20);
-					
-					//~ ioctl_ppc[0] = so_accept;
-					//~ ioctl_arm[0] = 0;
-					//~ sock_entry_arm[0].busy = 1;
-					
-					//~ sock_entry_arm[0].cmd0 = apt->sockfd;
-					
-					//~ soBusy[0] = 0;
-					
-					//~ sync_after_write((void*) ioctl_ppc, 0x40);
-					//~ sync_after_write(&sock_entry_arm[0], 0x20);
-				//~ }
-				
-				//~ break;
-			//~ }
-		//~ }
-		
-		//~ ioctl_ppc[0] = 0;
-	//~ }
-	
 	STACK_ALIGN(u32, sock_args, 4, 32);
 	
 	if (!apt->accepted)
 	{
 		sock_args[0] = apt->sockfd;
 		
-		s32 clientFd = IOS_Ioctl(sockFd, IOCTL_SO_ACCEPT, sock_args, sizeof(u32[1]), NULL, 0);
+		apt->clientfd = IOS_Ioctl(sockFd, IOCTL_SO_ACCEPT, sock_args, sizeof(u32[1]), NULL, 0);
 		
-		if (clientFd >= 0)
+		if (apt->clientfd >= 0)
 		{
-			const char* msg = "imagine archipelago LMFAO\n";
-			
-			STACK_ALIGN(IoctlvData, v, 2, 32);
-			
-			v[0].data = (void*) msg;
-			v[0].len = strlen(msg) + 1;
-			
-			STACK_ALIGN(sendto_params, sp, 1, 32);
-			
-			sp->socket = clientFd;
-			sp->flags = 0;
-			sp->has_destaddr = 0;
-			memset(&sp->destaddr, 0, 8);
-			
-			v[1].data = &sp;
-			v[1].len = sizeof(sendto_params);
-			
-			IOS_Ioctlv(sockFd, 0xD, 2, 0, &v);
-			
 			apt->accepted = 1;
 		}
 		
-		else if (clientFd == EWOULDBLOCK)
+		else if (apt->clientfd == EWOULDBLOCK)
 		{
 			
 		}
@@ -428,12 +377,71 @@ int ap_tcp_poll(APTCP* apt)
 		{
 			
 		}
+		
+		return 1;
 	}
+	
+	u8 cmd;
+	int read_bytes = recvall(apt, (void*) &cmd, 1);
+	
+	if (!read_bytes)
+	{
+		goto return_success;
+	}
+	
+	u8 mem[1024];
+	
+	switch (cmd)
+	{
+		case CMD_READ:
+		{
+			u32 address;
+			while (!recvall(apt, (void*) &address, 4));
+			
+			u32 size;
+			while (!recvall(apt, (void*) &size, 4));
+			
+			address &= 0x7FFFFFFF;
+			
+			//~ u8* mem = heap_alloc_aligned(apt->heap, size, 32);
+			//~ sync_before_read((void*) address, size);
+			memcpy(mem, (void*) address, size);
+			
+			while (!sendall(apt, (void*) mem, size));
+			
+			//~ heap_free(apt->heap, mem);
+			
+			break;
+		}
+		
+		case CMD_WRITE:
+		{
+			u32 address;
+			while (!recvall(apt, (void*) &address, 4));
+			
+			u32 size;
+			while (!recvall(apt, (void*) &size, 4));
+			
+			//~ u8* mem = heap_alloc_aligned(apt->heap, size, 32);
+			while (!recvall(apt, (void*) mem, size));
+			
+			address &= 0x7FFFFFFF;
+			
+			memcpy((void*) address, mem, size);
+			//~ sync_after_write((void*) address, size);
+			
+			//~ heap_free(apt->heap, mem);
+			
+			break;
+		}
+	}
+	
+	return_success:
 	
 	return 1;
 }
 
 void ap_tcp_exit(APTCP* apt)
 {
-	//~ IOS_Ioctl(sockFd, so_shutdown, , 0, NULL, 0);
+	heap_destroy(apt->heap);
 }
